@@ -23,14 +23,16 @@ class MinimumDistribution:
         *args,
         **kwargs
     ):
+        constraints.append(Constraint(values=np.ones_like(self.distribution.x), target=1.0))
         n_constraints = len(constraints)
+
 
         if initial_lambdas is None:
             lambdas = np.zeros(n_constraints)
         else:
             lambdas = np.array(initial_lambdas)
 
-        result = objective.minimize(constraints, lambdas, tol, max_iter)
+        result = objective.minimize(constraints, lambdas, tol, max_iter, *args, **kwargs)
         lambdas = result["optimal_lambdas"]
 
         self.distribution.pdf, _ = objective._pdf(constraints, lambdas, **kwargs)
@@ -38,8 +40,7 @@ class MinimumDistribution:
 
         return {
             "lambdas": lambdas,
-            "pdf": self.distribution.pdf,
-            "cdf": self.distribution.cdf,
+            "distribution": self.distribution,
             "objective_value": result["fun"],
             "nfev": result["nfev"],
         }

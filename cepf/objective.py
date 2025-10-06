@@ -9,7 +9,7 @@ from .distribution import Distribution
 class Objective(ABC):
 
     @abstractmethod
-    def _pdf(self, lambdas, constraints, prior_distribution: 'Distribution') -> tuple[np.ndarray, float]:
+    def _pdf(self, lambdas, constraints, *args, **kwargs) -> tuple[np.ndarray, float]:
         pass
 
     @abstractmethod
@@ -20,12 +20,12 @@ class Objective(ABC):
     def gradient(self, constraints, lambdas, *args, **kwargs) -> np.ndarray:
         pass
 
-    def minimize(self, constraints, lambdas, tol, max_iter):
+    def minimize(self, constraints, lambdas, tol, max_iter, **kwargs):
         """Minimize the objective function using L-BFGS-B"""
 
         result = minimize(
-            fun=partial(self.evaluate, constraints),
-            jac=partial(self.gradient, constraints),
+            fun=partial(self.evaluate, constraints, **kwargs),
+            jac=partial(self.gradient, constraints, **kwargs),
             x0=lambdas,
             method='L-BFGS-B',
             options={'gtol': tol, 'maxiter': max_iter}
@@ -41,8 +41,9 @@ class CrossEntropyObjective(Objective):
         self.x = x
         self.dx = dx
 
-    def _pdf(self, lambdas, constraints, prior_distribution: Distribution) -> tuple[np.ndarray, float]:
+    def _pdf(self, lambdas, constraints, prior_distribution) -> tuple[np.ndarray, float]:
         n_constraints = len(constraints)
+
         exponent = np.zeros_like(self.x)
         for i in range(n_constraints):
             exponent += lambdas[i] * constraints[i]
@@ -91,8 +92,11 @@ class EntropyObjective(CrossEntropyObjective):
         self.no_prior = Distribution((x[0], x[-1]), len(x))
         self.no_prior.pdf = np.ones_like(x)
 
+    def _pdf(self, lambdas, constraints, *args, **kwargs) -> tuple[np.ndarray, float]:
+        return super()._pdf(lambdas, constraints, prior_distribution=self.no_prior)
+
     def evaluate(self, constraints, lambdas, *args, **kwargs):
-        return super().evaluate(constraints, lambdas, self.no_prior)
+        return super().evaluate(constraints, lambdas, prior_distribution=self.no_prior)
 
     def gradient(self, constraints, lambdas, *args, **kwargs):
-        return super().gradient(constraints, lambdas, self.no_prior)
+        return super().gradient(constraints, lambdas, prior_distribution=self.no_prior)
