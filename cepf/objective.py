@@ -9,6 +9,10 @@ from .distribution import Distribution
 class Objective(ABC):
 
     @abstractmethod
+    def _pdf(self, lambdas, constraints, prior_distribution: 'Distribution') -> tuple[np.ndarray, float]:
+        pass
+
+    @abstractmethod
     def evaluate(self, constraints, lambdas, *args, **kwargs) -> float:
         pass
 
@@ -37,7 +41,7 @@ class CrossEntropyObjective(Objective):
         self.x = x
         self.dx = dx
 
-    def _pdf(self, lambdas, constraints, other_distribution: Distribution):
+    def _pdf(self, lambdas, constraints, prior_distribution: Distribution) -> tuple[np.ndarray, float]:
         n_constraints = len(constraints)
         exponent = np.zeros_like(self.x)
         for i in range(n_constraints):
@@ -45,14 +49,14 @@ class CrossEntropyObjective(Objective):
 
         # Avoid overflow
         exponent = np.clip(exponent, -500, 500)
-        exp_exponent = np.exp(exponent) * other_distribution.pdf
+        exp_exponent = np.exp(exponent) * prior_distribution.pdf
         mu = np.sum(exp_exponent) * self.dx
 
         if mu <= 0:
             raise ValueError("Normalization constant mu is non-positive.")
 
         pdf = exp_exponent / mu
-        return pdf, mu
+        return pdf, float(mu)
 
     def evaluate(self, constraints, lambdas, prior_distribution: Distribution):
         """Objective function F(λ) = log(μ) - Σ λ_i d_i"""
