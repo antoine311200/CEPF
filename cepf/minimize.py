@@ -20,19 +20,19 @@ class MinimumDistribution:
         initial_lambdas=None,
         tol=1e-6,
         max_iter=100,
+        method='L-BFGS-B',
         *args,
         **kwargs
     ):
         constraints.append(Constraint(values=np.ones_like(self.distribution.x), target=1.0))
         n_constraints = len(constraints)
 
-
         if initial_lambdas is None:
             lambdas = np.zeros(n_constraints)
         else:
             lambdas = np.array(initial_lambdas)
 
-        result = objective.minimize(constraints, lambdas, tol, max_iter, *args, **kwargs)
+        result = objective.minimize(constraints, lambdas, tol, max_iter, method=method, **kwargs)
         lambdas = result["optimal_lambdas"]
 
         self.distribution.pdf, _ = objective._pdf(constraints, lambdas, **kwargs)
@@ -53,9 +53,10 @@ class MinimumEntropyDistribution(MinimumDistribution):
         initial_lambdas=None,
         tol=1e-6,
         max_iter=100,
+        *args, **kwargs
     ):
         objective = EntropyObjective(self.distribution.x, self.distribution.dx)
-        return super().solve(constraints, objective, initial_lambdas, tol, max_iter)
+        return super().solve(constraints, objective, initial_lambdas, tol, max_iter, *args, **kwargs)
 
 
 class MinimumCrossEntropyDistribution(MinimumDistribution):
@@ -67,6 +68,7 @@ class MinimumCrossEntropyDistribution(MinimumDistribution):
         prior_distribution: Optional[Distribution] = None,
         tol=1e-6,
         max_iter=100,
+        *args, **kwargs
     ):
         objective = CrossEntropyObjective(self.distribution.x, self.distribution.dx)
-        return super().solve(constraints, objective, initial_lambdas, tol, max_iter, prior_distribution=prior_distribution)
+        return super().solve(constraints, objective, initial_lambdas, tol, max_iter, prior_distribution=prior_distribution, *args, **kwargs)

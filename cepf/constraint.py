@@ -16,3 +16,6 @@ class Constraint(np.ndarray):
 
     def __getitem__(self, index):
         return super().__getitem__(index)
+
+    def __repr__(self):
+        return f"Constraint(values={super().__repr__()}, target={self.target})"

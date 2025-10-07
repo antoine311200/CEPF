@@ -44,6 +44,8 @@ class Distribution:
         variance = self.get_variance()
         std = np.sqrt(variance)
 
+        entropy = -self._expected_value(lambda x: np.log(self.pdf + 1e-15))
+
         if std > 0:
             skewness = self._expected_value(lambda x: ((x - mean)/std)**3)
             kurtosis = self._expected_value(lambda x: ((x - mean)/std)**4)
@@ -56,5 +58,6 @@ class Distribution:
             "variance": variance,
             "std": std,
             "skewness": skewness,
-            "kurtosis": kurtosis
+            "kurtosis": kurtosis,
+            "entropy": entropy
         }

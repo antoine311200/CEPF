@@ -2,9 +2,10 @@ from abc import ABC, abstractmethod
 from functools import partial
 
 import numpy as np
-from scipy.optimize import minimize
+from scipy.optimize import minimize, root
 
 from .distribution import Distribution
+from .optimize.maxent import MaximumEntropyOptimizer
 
 class Objective(ABC):
 
@@ -20,16 +21,26 @@ class Objective(ABC):
     def gradient(self, constraints, lambdas, *args, **kwargs) -> np.ndarray:
         pass
 
-    def minimize(self, constraints, lambdas, tol, max_iter, **kwargs):
+    def minimize(self, constraints, lambdas, tol, max_iter, method, **kwargs):
         """Minimize the objective function using L-BFGS-B"""
 
         result = minimize(
             fun=partial(self.evaluate, constraints, **kwargs),
             jac=partial(self.gradient, constraints, **kwargs),
             x0=lambdas,
-            method='L-BFGS-B',
+            method=method,
             options={'gtol': tol, 'maxiter': max_iter}
         )
+
+        # optimizer = MaximumEntropyOptimizer(
+        #     A=np.array([c for c in constraints]),
+        #     b=np.array([c.target for c in constraints]),
+        #     max_iter=10,#max_iter,
+        #     tol=tol
+        # )
+        # result = optimizer.optimize(lambda_init=lambdas, verbose=False)
+
+
         if not result.success:
             raise RuntimeError("Optimization failed: " + result.message)
 

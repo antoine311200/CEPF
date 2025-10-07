@@ -30,7 +30,7 @@ class Option:
             return np.maximum(self.strike - S, 0) * self.discount_factor
 
 
-def test_lognormal_distribution(
+def run_experiment(
     S0: float,
     r: float,
     T: float,
@@ -41,27 +41,65 @@ def test_lognormal_distribution(
     n_points: int,
     max_iter: int = 100,
     tol: float = 1e-6,
+    method: str = 'L-BFGS-B',
+    experiment: str = "lognormal",
 ):
 
     # Create minimum entropy and minimum cross-entropy distribution objects
     min_entropy = MinimumEntropyDistribution(domain=(min_price, max_price), n_points=n_points)
     min_cross_entropy = MinimumCrossEntropyDistribution(domain=(min_price, max_price), n_points=n_points)
-
-    # Compute the exact log-normal distribution for comparison
     x, dx = min_entropy.distribution.x, min_entropy.distribution.dx
-    mu = np.log(S0) + (r - 0.5 * sigma**2) * T
-    p_exact = lognorm.pdf(x, s=sigma * np.sqrt(T), scale=np.exp(mu))
-    p_exact = p_exact / (np.sum(p_exact) * dx)
 
-    # Compute a prior distribution
-    sigma_prior = 0.35  # Higher volatility prior
-    mu_prior = np.log(S0) + (r - 0.5 * sigma_prior**2) * T
-    prior_pdf = lognorm.pdf(x, s=sigma_prior * np.sqrt(T), scale=np.exp(mu_prior))
-    prior_pdf = prior_pdf / (np.sum(prior_pdf) * dx)
+    if experiment == "lognormal":
+        # Compute the exact log-normal distribution for comparison
+        mu = np.log(S0) + (r - 0.5 * sigma**2) * T
+        p_exact = lognorm.pdf(x, s=sigma * np.sqrt(T), scale=np.exp(mu))
+        p_exact = p_exact / (np.sum(p_exact) * dx)
 
-    prior_distribution = Distribution(domain=(min_price, max_price), n_points=n_points)
-    prior_distribution.pdf = prior_pdf
-    prior_distribution.cdf = np.cumsum(prior_pdf) * dx
+        exact_dist = Distribution(domain=(min_price, max_price), n_points=n_points)
+        exact_dist.pdf = p_exact
+        exact_dist.cdf = np.cumsum(p_exact) * dx
+
+        # Compute a prior distribution
+        sigma_prior = 0.35  # Higher volatility prior
+        mu_prior = np.log(S0) + (r - 0.5 * sigma_prior**2) * T
+        prior_pdf = lognorm.pdf(x, s=sigma_prior * np.sqrt(T), scale=np.exp(mu_prior))
+        prior_pdf = prior_pdf / (np.sum(prior_pdf) * dx)
+
+        prior_distribution = Distribution(domain=(min_price, max_price), n_points=n_points)
+        prior_distribution.pdf = prior_pdf
+        prior_distribution.cdf = np.cumsum(prior_pdf) * dx
+
+    elif experiment == "discrete":
+        init_seq = np.array([6, 5, 4, 3, 2, 1, 1, 1, 1, 1]) / 25
+
+        # Convolve 4 times with itself to get a smoother distribution
+        p_exact = np.convolve(init_seq, init_seq)
+        p_exact = np.convolve(p_exact, init_seq)
+        p_exact = np.convolve(p_exact, init_seq)
+        p_exact = np.convolve(p_exact, init_seq)
+        p_exact = p_exact / np.sum(p_exact)
+
+        # plt.figure(figsize=(8, 4))
+        # plt.stem(np.arange(len(p_exact)), p_exact, basefmt=" ")
+        # plt.title("Exact Discrete Distribution")
+        # plt.xlabel("Asset Price")
+        # plt.ylabel("Probability")
+        # plt.grid(True)
+        # plt.show()
+
+        exact_dist = Distribution(domain=(min_price, max_price), n_points=n_points)
+        exact_dist.pdf = p_exact
+        exact_dist.cdf = np.cumsum(p_exact) * dx
+
+        # Prior distribution: uniform
+        prior_pdf = np.ones_like(x) / (max_price - min_price)
+        prior_distribution = Distribution(domain=(min_price, max_price), n_points=n_points)
+        prior_distribution.pdf = prior_pdf
+        prior_distribution.cdf = np.cumsum(prior_pdf) * dx
+    else:
+        raise ValueError("Unknown experiment")
+
 
     # Strikes for constraints with 0 for martingale constraint
     # The probability constraint is automatically added in the solve method
@@ -74,11 +112,20 @@ def test_lognormal_distribution(
         payoff = option.payoff(x)
 
         if strike == 0:
-            target = S0# * np.exp(-r * T)  # Martingale constraint
+            if experiment == "discrete":
+                # Use the exact mean from the discrete distribution
+                target = np.sum(x * exact_dist.pdf) * dx
+            else:
+                target = S0# * np.exp(-r * T)  # Martingale/Forward-price constraint
         else:
-            d1 = (np.log(S0 / strike) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
-            d2 = d1 - sigma * np.sqrt(T)
-            target = S0 * norm.cdf(d1) - strike * np.exp(-r * T) * norm.cdf(d2)
+            if experiment == "discrete":
+                # Use the exact prices from the discrete distribution
+                target = np.sum(payoff * exact_dist.pdf) * dx
+            else:
+                # Black-Scholes price
+                d1 = (np.log(S0 / strike) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
+                d2 = d1 - sigma * np.sqrt(T)
+                target = S0 * norm.cdf(d1) - strike * np.exp(-r * T) * norm.cdf(d2)
 
         constraints.append(Constraint(values=payoff, target=target))
         prices.append(target)
@@ -86,18 +133,31 @@ def test_lognormal_distribution(
     prices.append(1.0) # Probability constraint target
 
     # Solve for minimum entropy distribution
-    result_entropy = min_entropy.solve(constraints, tol=tol, max_iter=max_iter)
-    result_cross_entropy = min_cross_entropy.solve(constraints, tol=tol, max_iter=max_iter, prior_distribution=prior_distribution)
+    result_entropy = min_entropy.solve(constraints, tol=tol, max_iter=max_iter, method=method)
+    result_cross_entropy = min_cross_entropy.solve(constraints, tol=tol, max_iter=max_iter, prior_distribution=prior_distribution, method=method)
 
     return {
         "entropy": result_entropy,
         "cross_entropy": result_cross_entropy,
-        "exact": p_exact,
+        "exact": {"distribution": exact_dist},
         "prior": prior_pdf,
         "x": x,
         "dx": dx,
     }
 
+
+def KL_divergence(p, q, dx):
+    """Compute the Kullback-Leibler divergence D_KL(p || q)"""
+    mask = (p > 0) & (q > 0)
+    return np.sum(p[mask] * np.log(p[mask] / q[mask])) * dx
+
+def entropy(p, dx):
+    """Compute the entropy H(p) = -∫ p(x) log(p(x)) dx"""
+    mask = p > 0
+    return -np.sum(p[mask] * np.log(p[mask])) * dx
+
+
+experiment = "lognormal"  # "lognormal" or "discrete"
 
 if __name__ == "__main__":
 
@@ -107,29 +167,70 @@ if __name__ == "__main__":
         "r": 0.10,
         "T": 60 / 365,
         "sigma": 0.25,
-        "min_price": 30,
-        "max_price": 80,
-        "n_points": 1000,
-        "strikes": [40, 45, 50, 55, 60],
-        "max_iter": 100,
+        "min_price": 30 if experiment == "lognormal" else 0,
+        "max_price": 80 if experiment == "lognormal" else 46,
+        "n_points": 1000 if experiment == "lognormal" else 46,
+        "strikes": [45, 50, 55] if experiment == "lognormal" else [5, 10, 15, 20, 25],
+        "max_iter": 1000,
         "tol": 1e-6,
+        "method": 'L-BFGS-B' if experiment == "lognormal" else 'L-BFGS-B',
+        "experiment": experiment,
     }
+    results = run_experiment(**params)
 
-    results = test_lognormal_distribution(**params)
+    print("Lambdas for Minimum Entropy Distribution:")
+    print(results["entropy"]["lambdas"])
+
     entropy_dist = results["entropy"]["distribution"]
     cross_entropy_dist = results["cross_entropy"]["distribution"]
+    exact_dist = results["exact"]["distribution"]
 
     # Get statistics
     stats_entropy = entropy_dist.get_statistics()
     stats_cross_entropy = cross_entropy_dist.get_statistics()
+    stats_exact = exact_dist.get_statistics()
 
-    # plt.figure(figsize=(12, 8))
+    # Metrics
+    dx = results["dx"]
+    value_exact = entropy(exact_dist.pdf, dx)
+    value_entropy = entropy(entropy_dist.pdf, dx)
+    value_cross_entropy = entropy(cross_entropy_dist.pdf, dx)
+
+    kl_entropy = KL_divergence(exact_dist.pdf, entropy_dist.pdf, dx)
+    kl_cross_entropy = KL_divergence(exact_dist.pdf, cross_entropy_dist.pdf, dx)
+    print(f"Exact Entropy: {value_exact:.6f}, Min Entropy: {value_entropy:.6f}, KL Divergence: {kl_entropy:.6f}")
+    print(f"Exact Entropy: {value_exact:.6f}, Min Cross-Entropy: {value_cross_entropy:.6f}, KL Divergence: {kl_cross_entropy:.6f}")
+
+    # RMSE
+    prices_exact = []
+    prices_entropy = []
+    prices_cross_entropy = []
+    for strike in params["strikes"]:
+        option = Option(strike=strike, maturity=params["T"], rate=params["r"], option_type='call')
+        payoff = option.payoff(results["x"])
+
+        price_exact = np.sum(payoff * exact_dist.pdf) * dx
+        price_entropy = np.sum(payoff * entropy_dist.pdf) * dx
+        price_cross_entropy = np.sum(payoff * cross_entropy_dist.pdf) * dx
+
+        prices_exact.append(price_exact)
+        prices_entropy.append(price_entropy)
+        prices_cross_entropy.append(price_cross_entropy)
+
+    prices_exact = np.array(prices_exact)
+    prices_entropy = np.array(prices_entropy)
+    prices_cross_entropy = np.array(prices_cross_entropy)
+
+    rmse_entropy = np.sqrt(np.mean((prices_exact - prices_entropy) ** 2))
+    rmse_cross_entropy = np.sqrt(np.mean((prices_exact - prices_cross_entropy) ** 2))
+    print(f"RMSE MED: {rmse_entropy:.6f}, RMSE MXED: {rmse_cross_entropy:.6f}")
+
     # Make subplot 1 taking 2/3 of the height and subplot 2 taking 1/3 of the height
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 6), gridspec_kw={'height_ratios': [3, 1]})
-    ax1.plot(results["x"], results["exact"], label='Exact Log-Normal', linestyle='-', color='black', linewidth=0.8, alpha=0.7)
+    ax1.plot(results["x"], exact_dist.pdf, label='Exact Log-Normal', linestyle='-', color='black', linewidth=0.8, alpha=0.7)
     ax1.plot(results["x"], results["prior"], label='Prior Distribution', linestyle='--', color='gray', linewidth=0.8, alpha=0.7)
-    ax1.plot(results["x"], entropy_dist.pdf, label='Min Entropy', linestyle='--', linewidth=1.5)
-    ax1.plot(results["x"], cross_entropy_dist.pdf, label='Min Cross-Entropy', linestyle='-.', linewidth=1.5)
+    ax1.plot(results["x"], entropy_dist.pdf, label=f'MED (rmse: {rmse_entropy:.8f})', linestyle='--', linewidth=1.5)
+    ax1.plot(results["x"], cross_entropy_dist.pdf, label=f'MXED (rmse: {rmse_cross_entropy:.8f})', linestyle='-.', linewidth=1.5)
 
     # Highlight constraint points
     for strike in params["strikes"]:
@@ -147,13 +248,62 @@ if __name__ == "__main__":
         [key, f"{value_exact:.4f}", f"{value_entropy:.4f}", f"{value_cross_entropy:.4f}"]
         for key, value_exact, value_entropy, value_cross_entropy in zip(
             stats_entropy.keys(),
+            stats_exact.values(),
             stats_entropy.values(),
             stats_cross_entropy.values(),
-            stats_cross_entropy.values()
         )
     ]
-    table = ax2.table(cellText=cell_text, colLabels=["Statistic", "Exact", "Entropy", "Cross-Entropy"], loc='center')
+    table = ax2.table(cellText=cell_text, colLabels=["Statistic", "Exact Distribution", "MED", "MXED"], loc='center')
     ax2.axis('off')
     ax2.set_title("Distribution Statistics")
     plt.tight_layout()
+    plt.show()
+
+    # Compute the smile implied volatilities for strikes from 30 to 70
+    from scipy.stats import norm
+    from scipy.optimize import brentq
+
+    def black_scholes_call_price(S0, K, T, r, sigma):
+        d1 = (np.log(S0 / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
+        d2 = d1 - sigma * np.sqrt(T)
+        return S0 * norm.cdf(d1) - K * np.exp(-r * T) * norm.cdf(d2)
+
+    def implied_volatility_call(price, S0, K, T, r):
+        """Compute implied volatility using Brent's method"""
+        if price < max(0, S0 - K * np.exp(-r * T)):
+            return 0.0  # Arbitrage condition
+
+        def objective(sigma):
+            return black_scholes_call_price(S0, K, T, r, sigma) - price
+
+        try:
+            return brentq(objective, 1e-6, 5.0)
+        except ValueError:
+            return np.nan
+
+    strike_range = np.linspace(30, 70, 20)
+    iv_exact = []
+    iv_entropy = []
+    iv_cross_entropy = []
+    for K in strike_range:
+        option = Option(strike=K, maturity=params["T"], rate=params["r"], option_type='call')
+        payoff = option.payoff(results["x"])
+
+        price_exact = np.sum(payoff * exact_dist.pdf) * dx
+        price_entropy = np.sum(payoff * entropy_dist.pdf) * dx
+        price_cross_entropy = np.sum(payoff * cross_entropy_dist.pdf) * dx
+
+        iv_exact.append(implied_volatility_call(price_exact, params["S0"], K, params["T"], params["r"]))
+        iv_entropy.append(implied_volatility_call(price_entropy, params["S0"], K, params["T"], params["r"]))
+        iv_cross_entropy.append(implied_volatility_call(price_cross_entropy, params["S0"], K, params["T"], params["r"]))
+
+    plt.figure(figsize=(10, 5))
+    plt.plot(strike_range, iv_exact, label='Exact Implied Volatility', linestyle='-', color='black', linewidth=0.8, alpha=0.7)
+    plt.plot(strike_range, iv_entropy, label='MED Implied Volatility', linestyle='--', linewidth=1.5)
+    plt.plot(strike_range, iv_cross_entropy, label='MXED Implied Volatility', linestyle='-.', linewidth=1.5)
+    plt.title('Implied Volatility Smile')
+    plt.xlabel('Strike Price')
+    plt.ylabel('Implied Volatility')
+    plt.legend()
+    plt.grid(True)
     plt.show()
