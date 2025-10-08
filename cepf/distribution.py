@@ -1,5 +1,4 @@
 import numpy as np
-from scipy.interpolate import interp1d
 
 class Distribution:
 
@@ -61,3 +60,58 @@ class Distribution:
             "kurtosis": kurtosis,
             "entropy": entropy
         }
+
+class PiecewiseTiltedDistribution(Distribution):
+    """Piece-wise tilted distribution defined by knots and values at knots"""
+
+    def __init__(self, domain, n_points, knots, values) -> None:
+        super().__init__(domain, n_points)
+
+        if len(knots) != len(values):
+            raise ValueError("Knots and values must have the same length")
+        if np.any(np.diff(knots) <= 0):
+            raise ValueError("Knots must be in strictly increasing order")
+        # if knots[0] > domain[0] or knots[-1] < domain[1]:
+        #     raise ValueError("Knots must cover the entire domain")
+
+        self.knots = knots
+        self.values = values
+
+        self.pdf = self._compute_pdf()
+        self.cdf = np.cumsum(self.pdf) * self.dx
+
+    def _compute_pdf(self):
+        """Compute the PDF as value[0] exp(- value[1] * x) piece-wise"""
+        pdf = np.zeros_like(self.x)
+
+        for i in range(len(self.knots) - 1):
+            mask = (self.x >= self.knots[i]) & (self.x < self.knots[i + 1])
+            pdf[mask] = self.values[i][0] * np.exp(-self.values[i][1] * self.x[mask])
+
+        # Handle the last knot to include the endpoint
+        if len(self.knots) > 1:
+            mask = (self.x >= self.knots[-2]) & (self.x <= self.knots[-1])
+            pdf[mask] = (1 / self.values[-1][1]) * np.exp(-self.values[-1][1] * self.x[mask])
+        else:
+            pdf = self.values[0][0] * np.exp(-self.values[0][1] * self.x)
+
+        # Normalize the PDF
+        pdf_sum = np.sum(pdf) * self.dx
+        if pdf_sum > 0:
+            pdf /= pdf_sum
+        return pdf
+
+class TiltedDistribution(PiecewiseTiltedDistribution):
+    """Exponentially tilted distribution defined by parameters (alpha, beta)"""
+
+    def __init__(self, domain, n_points, alpha, beta) -> None:
+        super().__init__(domain, n_points, knots=[domain[0]], values=[(alpha, beta)])
+
+        if beta <= 0:
+            raise ValueError("Beta must be positive")
+
+        self.alpha = alpha
+        self.beta = beta
+
+        self.pdf = self._compute_pdf()
+        self.cdf = np.cumsum(self.pdf) * self.dx
