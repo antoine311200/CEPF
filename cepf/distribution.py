@@ -1,3 +1,5 @@
+from typing import Optional
+
 import numpy as np
 
 class Distribution:
@@ -64,18 +66,21 @@ class Distribution:
 class PiecewiseTiltedDistribution(Distribution):
     """Piece-wise tilted distribution defined by knots and values at knots"""
 
-    def __init__(self, domain, n_points, knots, values) -> None:
+    def __init__(self, domain, n_points, knots, values, prior_distribution: Optional[Distribution] = None) -> None:
         super().__init__(domain, n_points)
 
         if len(knots) != len(values):
             raise ValueError("Knots and values must have the same length")
         if np.any(np.diff(knots) <= 0):
             raise ValueError("Knots must be in strictly increasing order")
-        # if knots[0] > domain[0] or knots[-1] < domain[1]:
-        #     raise ValueError("Knots must cover the entire domain")
 
         self.knots = knots
         self.values = values
+
+        self.prior_distribution = prior_distribution
+        if prior_distribution:
+            if not np.array_equal(self.x, prior_distribution.x) or self.dx != prior_distribution.dx:
+                raise ValueError("Incompatible distributions")
 
         self.pdf = self._compute_pdf()
         self.cdf = np.cumsum(self.pdf) * self.dx
@@ -95,8 +100,12 @@ class PiecewiseTiltedDistribution(Distribution):
         else:
             pdf = self.values[0][0] * np.exp(-self.values[0][1] * self.x)
 
+        if self.prior_distribution:
+            pdf *= self.prior_distribution.pdf
+
         # Normalize the PDF
         pdf_sum = np.sum(pdf) * self.dx
+
         if pdf_sum > 0:
             pdf /= pdf_sum
         return pdf
@@ -104,8 +113,8 @@ class PiecewiseTiltedDistribution(Distribution):
 class TiltedDistribution(PiecewiseTiltedDistribution):
     """Exponentially tilted distribution defined by parameters (alpha, beta)"""
 
-    def __init__(self, domain, n_points, alpha, beta) -> None:
-        super().__init__(domain, n_points, knots=[domain[0]], values=[(alpha, beta)])
+    def __init__(self, domain, n_points, alpha, beta, prior_distribution: Optional[Distribution] = None) -> None:
+        super().__init__(domain, n_points, knots=[domain[0]], values=[(alpha, beta)], prior_distribution=prior_distribution)
 
         if beta <= 0:
             raise ValueError("Beta must be positive")
